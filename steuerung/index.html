@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="referrer" content="no-referrer">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Steuerung</title>
+<!--
+  Steuerung fuers Wohnzimmer: grosse Knoepfe, die Alexa-Routinen ausloesen
+  (Alexa-Skill "URL Routine Trigger" von Virtual Smart Home).
+  Die Ausloese-Adressen enthalten Zugangsschluessel. Sie stehen NICHT in dieser Datei,
+  sondern werden einmalig auf dem Geraet eingetragen (Zahnrad) und nur dort im Browser gespeichert.
+  Test: ?einstellungen=1 oeffnet direkt die Einstellungen.
+-->
+<style>
+  :root {
+    --bg: #0f172a; --kachel: #1e293b; --linie: rgba(255,255,255,.08);
+    --fg: #f1f5f9; --muted: #94a3b8;
+    --an: #fbbf24; --an-fg: #1f1300; --aus: #334155;
+    --radio: #22c55e; --stopp: #ef4444; --sonos: #3b82f6;
+    --ok: #22c55e; --fehler: #ef4444;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  }
+  .seite { height: 100%; display: grid; grid-template-rows: 9vh 1fr; padding: 2.4vh 2.6vw 3vh; gap: 2.4vh; }
+  .kopf { display: flex; align-items: center; justify-content: space-between; }
+  .kopf h1 { margin: 0; font-size: 5vh; font-weight: 650; letter-spacing: .01em; }
+  .kopf .rechts { display: flex; align-items: center; gap: 2.4vw; }
+  .zeit { font-size: 4.4vh; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .zahnrad {
+    width: 8vh; height: 8vh; border-radius: 2vh; border: 1px solid var(--linie);
+    background: var(--kachel); color: var(--muted); font-size: 4.4vh; display: grid; place-items: center; cursor: pointer;
+  }
+  .raster { display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr; gap: 2.4vh 1.8vw; min-height: 0; }
+  .kachel {
+    background: var(--kachel); border: 1px solid var(--linie); border-radius: 3vh;
+    display: flex; flex-direction: column; padding: 2.4vh 1.6vw; gap: 1.8vh; min-height: 0;
+  }
+  .kachel h2 { margin: 0; font-size: 4.2vh; font-weight: 600; display: flex; align-items: center; gap: 1vw; }
+  .kachel h2 span.sym { font-size: 5vh; }
+  .knoepfe { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 1.2vw; min-height: 0; }
+  .knoepfe.einzeln { grid-template-columns: 1fr; }
+  button.k {
+    border: 0; border-radius: 2.4vh; font: inherit; font-size: 5.4vh; font-weight: 700; color: var(--fg);
+    cursor: pointer; transition: transform .08s ease, filter .2s ease, box-shadow .3s ease; min-height: 0;
+  }
+  button.k:active { transform: scale(.97); filter: brightness(1.15); }
+  button.k small { display: block; font-size: 2.6vh; font-weight: 500; opacity: .8; margin-top: .6vh; }
+  .an { background: var(--an); color: var(--an-fg); }
+  .aus { background: var(--aus); }
+  .radio { background: var(--radio); color: #04210f; }
+  .stopp { background: var(--stopp); }
+  .sonos { background: var(--sonos); }
+  .einr { background: transparent; border: 2px dashed var(--linie) !important; color: var(--muted); }
+  button.k.fehlt { opacity: .45; }
+  button.k.ok { box-shadow: 0 0 0 .7vh var(--ok); }
+  button.k.err { box-shadow: 0 0 0 .7vh var(--fehler); }
+
+  .meldung {
+    position: fixed; left: 50%; bottom: 4vh; transform: translateX(-50%) translateY(20vh);
+    background: #020617; border: 1px solid var(--linie); border-radius: 2vh; padding: 1.8vh 2.4vw;
+    font-size: 3.6vh; transition: transform .3s ease; pointer-events: none; white-space: nowrap;
+  }
+  .meldung.zeigen { transform: translateX(-50%) translateY(0); }
+
+  dialog {
+    width: min(92vw, 1100px); max-height: 92vh; border: 1px solid var(--linie); border-radius: 3vh;
+    background: #0b1222; color: var(--fg); padding: 3vh 3vw;
+  }
+  dialog::backdrop { background: rgba(2, 6, 23, .7); }
+  dialog h2 { margin: 0 0 1vh; font-size: 4vh; }
+  dialog p { margin: 0 0 2vh; color: var(--muted); font-size: 2.6vh; line-height: 1.4; }
+  .feld { display: grid; grid-template-columns: 30% 1fr; align-items: center; gap: 1vw; margin: 1.2vh 0; }
+  .feld label { font-size: 2.8vh; }
+  .feld input {
+    width: 100%; font: inherit; font-size: 2.4vh; padding: 1.4vh 1vw; border-radius: 1.4vh;
+    border: 1px solid var(--linie); background: #111a2e; color: var(--fg);
+  }
+  .feld input:invalid { border-color: var(--fehler); }
+  .leiste { display: flex; justify-content: space-between; gap: 1vw; margin-top: 2.4vh; }
+  .leiste button { font: inherit; font-size: 2.8vh; padding: 1.4vh 2vw; border-radius: 1.6vh; border: 0; cursor: pointer; }
+  .b-speichern { background: var(--ok); color: #04210f; font-weight: 700; }
+  .b-abbrechen { background: var(--aus); color: var(--fg); }
+  .b-test { background: var(--kachel); color: var(--fg); border: 1px solid var(--linie) !important; }
+</style>
+</head>
+<body>
+<div class="seite">
+  <div class="kopf">
+    <h1>Steuerung</h1>
+    <div class="rechts">
+      <div class="zeit" id="zeit">--:--</div>
+      <button class="zahnrad" id="zahnrad" aria-label="Einstellungen">⚙</button>
+    </div>
+  </div>
+
+  <div class="raster">
+    <section class="kachel">
+      <h2><span class="sym">💡</span> Oberlicht</h2>
+      <div class="knoepfe">
+        <button class="k an" data-aktion="oberlicht_an">An</button>
+        <button class="k aus" data-aktion="oberlicht_aus">Aus</button>
+      </div>
+    </section>
+    <section class="kachel">
+      <h2><span class="sym">🍳</span> Küche</h2>
+      <div class="knoepfe">
+        <button class="k an" data-aktion="kueche_an">An</button>
+        <button class="k aus" data-aktion="kueche_aus">Aus</button>
+      </div>
+    </section>
+    <section class="kachel">
+      <h2><span class="sym">📻</span> Radio Fritz</h2>
+      <div class="knoepfe einzeln">
+        <button class="k radio" data-aktion="fritz_wohnzimmer">▶ Abspielen<small>im Wohnzimmer</small></button>
+      </div>
+    </section>
+    <section class="kachel">
+      <h2><span class="sym">🔇</span> Musik aus</h2>
+      <div class="knoepfe einzeln">
+        <button class="k stopp" data-aktion="musik_aus">■ Stopp<small>im Wohnzimmer</small></button>
+      </div>
+    </section>
+    <section class="kachel">
+      <h2><span class="sym">🎵</span> Sonos und Spotify</h2>
+      <div class="knoepfe einzeln">
+        <button class="k sonos" id="sonos">Sonos öffnen<small>alle Räume, Favoriten, Spotify</small></button>
+      </div>
+    </section>
+    <section class="kachel">
+      <h2><span class="sym">⚙</span> Einrichten</h2>
+      <div class="knoepfe einzeln">
+        <button class="k einr" id="einrichten">Knöpfe verbinden<small id="stand">noch nichts eingerichtet</small></button>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="meldung" id="meldung"></div>
+
+<dialog id="dlg">
+  <form method="dialog" id="formular">
+    <h2>Knöpfe verbinden</h2>
+    <p>Hier die Auslöse-Adressen aus „URL Routine Trigger“ (virtualsmarthome.xyz) einfügen.
+       Sie werden nur auf diesem Tablet gespeichert. Wer eine Adresse kennt, kann das Gerät schalten:
+       Adressen nicht weitergeben.</p>
+    <div id="felder"></div>
+    <div class="leiste">
+      <button type="button" class="b-abbrechen" id="abbrechen">Abbrechen</button>
+      <button type="submit" class="b-speichern" id="speichern">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  "use strict";
+  var AKTIONEN = [
+    { id: "oberlicht_an",     name: "Oberlicht an" },
+    { id: "oberlicht_aus",    name: "Oberlicht aus" },
+    { id: "kueche_an",        name: "Küche an" },
+    { id: "kueche_aus",       name: "Küche aus" },
+    { id: "fritz_wohnzimmer", name: "Radio Fritz (Wohnzimmer)" },
+    { id: "musik_aus",        name: "Musik aus (Wohnzimmer)" }
+  ];
+  var KEY = "steuerung-adressen-v1";
+  var SONOS = "https://play.sonos.com/";
+  var $ = function (id) { return document.getElementById(id); };
+
+  function laden() { try { return JSON.parse(localStorage.getItem(KEY) || "{}") || {}; } catch (e) { return {}; } }
+  function sichern(o) { try { localStorage.setItem(KEY, JSON.stringify(o)); return true; } catch (e) { return false; } }
+  var adressen = laden();
+
+  function gueltig(u) { return /^https:\/\/[^\s]+$/i.test(u || ""); }
+
+  function anzeigen() {
+    var n = 0;
+    AKTIONEN.forEach(function (a) {
+      var b = document.querySelector('[data-aktion="' + a.id + '"]');
+      var da = gueltig(adressen[a.id]);
+      if (da) n++;
+      if (b) b.classList.toggle("fehlt", !da);
+    });
+    $("stand").textContent = n === 0 ? "noch nichts eingerichtet" : n + " von " + AKTIONEN.length + " Knöpfen verbunden";
+  }
+
+  var mTimer = null;
+  function melden(text) {
+    var m = $("meldung"); m.textContent = text; m.classList.add("zeigen");
+    clearTimeout(mTimer); mTimer = setTimeout(function () { m.classList.remove("zeigen"); }, 2600);
+  }
+
+  function ausloesen(aktion, knopf) {
+    var url = adressen[aktion.id];
+    if (!gueltig(url)) { melden(aktion.name + ": noch nicht verbunden"); oeffnen(); return; }
+    knopf.classList.remove("ok", "err");
+    melden(aktion.name + " …");
+    fetch(url, { mode: "no-cors", cache: "no-store", referrerPolicy: "no-referrer", credentials: "omit" })
+      .then(function () {
+        knopf.classList.add("ok"); melden(aktion.name + " ✓");
+        setTimeout(function () { knopf.classList.remove("ok"); }, 1500);
+      })
+      .catch(function () {
+        knopf.classList.add("err"); melden(aktion.name + ": keine Verbindung");
+        setTimeout(function () { knopf.classList.remove("err"); }, 2500);
+      });
+  }
+
+  AKTIONEN.forEach(function (a) {
+    var b = document.querySelector('[data-aktion="' + a.id + '"]');
+    if (b) b.addEventListener("click", function () { ausloesen(a, b); });
+  });
+
+  $("sonos").addEventListener("click", function () { window.open(SONOS, "_blank", "noopener"); });
+
+  // Einstellungen
+  function oeffnen() {
+    var f = $("felder"); f.innerHTML = "";
+    AKTIONEN.forEach(function (a) {
+      var d = document.createElement("div"); d.className = "feld";
+      var l = document.createElement("label"); l.textContent = a.name; l.htmlFor = "f_" + a.id;
+      var i = document.createElement("input"); i.type = "url"; i.id = "f_" + a.id; i.placeholder = "https://www.virtualsmarthome.xyz/...";
+      i.pattern = "https://.+"; i.autocomplete = "off"; i.spellcheck = false; i.value = adressen[a.id] || "";
+      d.appendChild(l); d.appendChild(i); f.appendChild(d);
+    });
+    var dlg = $("dlg");
+    if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
+  }
+  $("zahnrad").addEventListener("click", oeffnen);
+  $("einrichten").addEventListener("click", oeffnen);
+  $("abbrechen").addEventListener("click", function () { $("dlg").close(); });
+  $("formular").addEventListener("submit", function (ev) {
+    var neu = {};
+    AKTIONEN.forEach(function (a) {
+      var v = ($("f_" + a.id).value || "").trim();
+      if (gueltig(v)) neu[a.id] = v;
+    });
+    adressen = neu;
+    melden(sichern(neu) ? "Gespeichert ✓" : "Speichern nicht möglich");
+    anzeigen();
+  });
+
+  // Uhrzeit
+  function tick() {
+    var d = new Date();
+    $("zeit").textContent = d.getHours() + ":" + (d.getMinutes() < 10 ? "0" : "") + d.getMinutes();
+    setTimeout(tick, 60000 - d.getSeconds() * 1000 - d.getMilliseconds() + 50);
+  }
+
+  tick();
+  anzeigen();
+  if (new URLSearchParams(location.search).get("einstellungen") === "1") oeffnen();
+})();
+</script>
+</body>
+</html>
