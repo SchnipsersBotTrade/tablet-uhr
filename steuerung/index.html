@@ -78,7 +78,12 @@
   dialog::backdrop { background: rgba(2, 6, 23, .7); }
   dialog h2 { margin: 0 0 1vh; font-size: 4vh; }
   dialog p { margin: 0 0 2vh; color: var(--muted); font-size: 2.6vh; line-height: 1.4; }
-  .feld { display: grid; grid-template-columns: 30% 1fr; align-items: center; gap: 1vw; margin: 1.2vh 0; }
+  .feld { display: grid; grid-template-columns: 28% 1fr auto; align-items: center; gap: 1vw; margin: 1.2vh 0; }
+  .feld button.einf {
+    font: inherit; font-size: 2.6vh; padding: 1.3vh 1.4vw; border-radius: 1.4vh; border: 0; cursor: pointer;
+    background: var(--sonos); color: var(--fg); font-weight: 600; white-space: nowrap;
+  }
+  .feld.gesetzt input { border-color: var(--ok); }
   .feld label { font-size: 2.8vh; }
   .feld input {
     width: 100%; font: inherit; font-size: 2.4vh; padding: 1.4vh 1vw; border-radius: 1.4vh;
@@ -229,7 +234,18 @@
       var l = document.createElement("label"); l.textContent = a.name; l.htmlFor = "f_" + a.id;
       var i = document.createElement("input"); i.type = "url"; i.id = "f_" + a.id; i.placeholder = "https://www.virtualsmarthome.xyz/...";
       i.pattern = "https://.+"; i.autocomplete = "off"; i.spellcheck = false; i.value = adressen[a.id] || "";
-      d.appendChild(l); d.appendChild(i); f.appendChild(d);
+      var e = document.createElement("button"); e.type = "button"; e.className = "einf"; e.textContent = "📋 Einfügen";
+      function markieren() { d.classList.toggle("gesetzt", gueltig(i.value.trim())); }
+      i.addEventListener("input", markieren); markieren();
+      e.addEventListener("click", function () {
+        if (!navigator.clipboard || !navigator.clipboard.readText) { i.focus(); melden("Bitte lange ins Feld tippen und Einfügen wählen"); return; }
+        navigator.clipboard.readText().then(function (t) {
+          t = (t || "").trim();
+          if (gueltig(t)) { i.value = t; markieren(); melden(a.name + ": eingefügt ✓"); }
+          else { melden("In der Zwischenablage ist keine passende Adresse"); }
+        }).catch(function () { i.focus(); melden("Bitte lange ins Feld tippen und Einfügen wählen"); });
+      });
+      d.appendChild(l); d.appendChild(i); d.appendChild(e); f.appendChild(d);
     });
     var dlg = $("dlg");
     if (dlg.showModal) dlg.showModal(); else dlg.setAttribute("open", "");
