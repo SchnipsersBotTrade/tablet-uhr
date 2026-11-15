@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b1220">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<title>Uhr und Wetter</title>
+<!--
+  Uhr und Wetter im Wechsel, ohne Werbung.
+  Einstellbar ueber die Adresse, z. B.:
+    ?sek=10&ort=Berlin&lat=52.52&lon=13.41&nacht=1
+  sek     Sekunden pro Ansicht (Standard 10)
+  ort     angezeigter Ortsname
+  lat/lon Koordinaten fuer das Wetter
+  nacht   1 = zwischen 22 und 6 Uhr gedimmt (Standard), 0 = aus
+  ansicht uhr oder wetter = nur diese Ansicht zeigen (zum Testen)
+  Ort, sek und nacht werden im Browser gespeichert. Einmal mit Parametern
+  aufrufen genuegt, danach reicht die Adresse ohne Parameter.
+  Antippen: beim ersten Mal Vollbild, danach Wechsel der Ansicht.
+  Wetterdaten: Open-Meteo (kostenlos, ohne Anmeldung).
+-->
+<style>
+  :root {
+    --fg: #f4f7fb;
+    --muted: rgba(244, 247, 251, .70);
+    --soft: rgba(244, 247, 251, .45);
+    --tile: rgba(255, 255, 255, .09);
+    --tile-line: rgba(255, 255, 255, .12);
+    --rain: #8fd0ff;
+    --warm: #ffc48a;
+    --cold: #a9dbff;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #0b1220; color: var(--fg);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Arial, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-user-select: none; user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: none;
+  }
+  #bg {
+    position: fixed; inset: 0;
+    background: linear-gradient(160deg, var(--bg1, #0f1a2b), var(--bg2, #1f3350));
+    transition: background 4s ease;
+  }
+  body.nacht #stage { filter: brightness(.55); }
+  #stage { position: fixed; inset: 0; transition: filter 3s ease; }
+  .view {
+    position: absolute; inset: 0;
+    opacity: 0; visibility: hidden;
+    transition: opacity .9s ease, visibility 0s linear .9s;
+  }
+  .view.on { opacity: 1; visibility: visible; transition: opacity .9s ease, visibility 0s; }
+
+  /* ---------- Uhr ---------- */
+  #uhr { display: flex; align-items: center; justify-content: center; }
+  .uhr-box { text-align: center; line-height: 1; }
+  .zeit {
+    font-size: min(36vw, 62vh);
+    font-weight: 600; letter-spacing: -.02em;
+    text-shadow: 0 .02em .08em rgba(0, 0, 0, .35);
+  }
+  .datum { font-size: min(5.4vw, 9vh); font-weight: 500; margin-top: 2vh; }
+  .kurz  { font-size: min(3.6vw, 6vh); color: var(--muted); margin-top: 2.6vh; min-height: 1em; }
+
+  /* ---------- Wetter ---------- */
+  #wetter {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 6vh 1fr 23vh 25vh;
+    grid-template-areas: "kopf kopf" "jetzt fakten" "stunden stunden" "tage tage";
+    gap: 2.2vh 3vw;
+    padding: 3.2vh 3.6vw 3.6vh;
+  }
+  .kopf {
+    grid-area: kopf; display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 3.6vh; color: var(--muted);
+  }
+  .kopf b { color: var(--fg); font-weight: 600; }
+  .jetzt { grid-area: jetzt; display: flex; align-items: center; gap: 2.4vw; min-width: 0; }
+  .jetzt-icon { font-size: 19vh; line-height: 1; }
+  .jetzt-temp { font-size: 21vh; font-weight: 600; line-height: .95; letter-spacing: -.02em; }
+  .jetzt-text { font-size: 4.6vh; margin-top: .6vh; }
+  .jetzt-fuehlt { font-size: 3.4vh; color: var(--muted); margin-top: .8vh; }
+
+  .fakten {
+    grid-area: fakten;
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: 1fr 1fr;
+    gap: 1.6vh 1.2vw; align-content: center;
+  }
+  .kachel {
+    background: var(--tile); border: 1px solid var(--tile-line); border-radius: 2.2vh;
+    padding: 1.6vh 1.2vw; display: flex; flex-direction: column; justify-content: center; min-width: 0;
+  }
+  .kachel .l { font-size: 2.6vh; color: var(--muted); white-space: nowrap; }
+  .kachel .w { font-size: 4.4vh; font-weight: 600; margin-top: .5vh; white-space: nowrap; }
+  .kachel .w small { font-size: .6em; font-weight: 500; color: var(--muted); }
+
+  .stunden, .tage {
+    display: grid; background: var(--tile); border: 1px solid var(--tile-line); border-radius: 2.4vh;
+    align-items: center; text-align: center; min-height: 0;
+  }
+  .stunden { grid-area: stunden; grid-template-columns: repeat(8, 1fr); padding: 1.4vh .8vw; }
+  .tage    { grid-area: tage;    grid-template-columns: repeat(5, 1fr); padding: 1.4vh .8vw; }
+  .zelle { display: flex; flex-direction: column; align-items: center; gap: .5vh; min-width: 0; }
+  .zelle + .zelle { border-left: 1px solid var(--tile-line); }
+  .z-t { font-size: 2.8vh; color: var(--muted); }
+  .z-i { font-size: 5.2vh; line-height: 1.1; }
+  .z-w { font-size: 3.8vh; font-weight: 600; }
+  .z-w .min { color: var(--muted); font-weight: 500; }
+  .z-r { font-size: 2.5vh; color: var(--rain); min-height: 1em; }
+  .tage .z-t { font-size: 3vh; color: var(--fg); font-weight: 500; }
+
+  .hinweis {
+    position: absolute; right: 2vw; bottom: 1.2vh; font-size: 2vh; color: var(--soft);
+  }
+
+  /* Hochformat (z. B. Tablet hochkant) */
+  @media (orientation: portrait) {
+    .zeit { font-size: min(30vw, 40vh); }
+    .datum { font-size: min(6vw, 5vh); }
+    .kurz { font-size: min(4.2vw, 3.4vh); }
+    #wetter {
+      grid-template-columns: 1fr;
+      grid-template-rows: 4vh auto auto 15vh 17vh;
+      grid-template-areas: "kopf" "jetzt" "fakten" "stunden" "tage";
+      gap: 1.6vh;
+    }
+    .kopf { font-size: 2.4vh; }
+    .jetzt-icon { font-size: 11vh; } .jetzt-temp { font-size: 12vh; }
+    .jetzt-text { font-size: 3vh; } .jetzt-fuehlt { font-size: 2.2vh; }
+    .kachel .l { font-size: 1.8vh; } .kachel .w { font-size: 3vh; }
+    .stunden { grid-template-columns: repeat(4, 1fr); grid-auto-rows: 1fr; }
+    .stunden .zelle:nth-child(n+5) { display: none; }
+    .z-t { font-size: 1.9vh; } .z-i { font-size: 3.4vh; } .z-w { font-size: 2.6vh; } .z-r { font-size: 1.8vh; }
+    .tage .z-t { font-size: 2vh; }
+  }
+</style>
+</head>
+<body>
+<div id="bg"></div>
+<div id="stage">
+  <section id="uhr" class="view on" aria-label="Uhr">
+    <div class="uhr-box">
+      <div class="zeit" id="zeit">--:--</div>
+      <div class="datum" id="datum"></div>
+      <div class="kurz" id="kurz"></div>
+    </div>
+  </section>
+
+  <section id="wetter" class="view" aria-label="Wetter">
+    <div class="kopf"><span><b id="ort">Berlin</b> &nbsp;·&nbsp; <span id="wdatum"></span></span><span id="wzeit"></span></div>
+    <div class="jetzt">
+      <div class="jetzt-icon" id="jIcon"></div>
+      <div>
+        <div class="jetzt-temp" id="jTemp">--°</div>
+        <div class="jetzt-text" id="jText"></div>
+        <div class="jetzt-fuehlt" id="jFuehlt"></div>
+      </div>
+    </div>
+    <div class="fakten" id="fakten"></div>
+    <div class="stunden" id="stunden"></div>
+    <div class="tage" id="tage"></div>
+    <div class="hinweis" id="stand"></div>
+  </section>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Einstellungen ----------
+  var p = new URLSearchParams(location.search);
+  var ORT_KEY = "uhr-wetter-einstellungen-v1";
+  var gespeichert = {};
+  try { gespeichert = JSON.parse(localStorage.getItem(ORT_KEY) || "{}") || {}; } catch (e) {}
+  ["sek", "ort", "lat", "lon", "nacht"].forEach(function (k) { if (p.has(k)) gespeichert[k] = p.get(k); });
+  try { localStorage.setItem(ORT_KEY, JSON.stringify(gespeichert)); } catch (e) {}
+  var CFG = {
+    sek: Math.max(3, parseInt(gespeichert.sek || "10", 10)),
+    ort: gespeichert.ort || "Berlin",
+    lat: parseFloat(gespeichert.lat || "52.52"),
+    lon: parseFloat(gespeichert.lon || "13.41"),
+    nacht: gespeichert.nacht !== "0",
+    ansicht: p.get("ansicht") // "uhr" | "wetter" | null
+  };
+  var REFRESH_MS = 10 * 60 * 1000;
+  var RETRY_MS = 60 * 1000;
+  var CACHE_KEY = "uhr-wetter-cache-v1";
+
+  var $ = function (id) { return document.getElementById(id); };
+  $("ort").textContent = CFG.ort;
+
+  // ---------- Hilfen ----------
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  function minus(s) { return String(s).replace("-", "−"); }
+  function grad(v) { return minus(Math.round(v)) + "°"; }
+  function hhmm(iso) { return iso ? iso.slice(11, 16) : ""; }
+
+  var WOCHENTAG = ["Sonntag", "Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag"];
+  var WT_KURZ = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"];
+  var MONAT = ["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"];
+
+  function richtung(deg) {
+    var r = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"];
+    return r[Math.round(((deg % 360) + 360) % 360 / 45) % 8];
+  }
+
+  // WMO-Wettercodes
+  function wetter(code, tag) {
+    var t = tag !== 0;
+    var m = {
+      0:  ["Klar", t ? "☀️" : "🌙"],
+      1:  ["Überwiegend klar", t ? "🌤️" : "🌙"],
+      2:  ["Teilweise bewölkt", t ? "⛅" : "☁️"],
+      3:  ["Bedeckt", "☁️"],
+      45: ["Nebel", "🌫️"], 48: ["Reifnebel", "🌫️"],
+      51: ["Leichter Niesel", "🌦️"], 53: ["Nieselregen", "🌦️"], 55: ["Starker Niesel", "🌧️"],
+      56: ["Gefrierender Niesel", "🌧️"], 57: ["Gefrierender Niesel", "🌧️"],
+      61: ["Leichter Regen", "🌧️"], 63: ["Regen", "🌧️"], 65: ["Starker Regen", "🌧️"],
+      66: ["Gefrierender Regen", "🌧️"], 67: ["Gefrierender Regen", "🌧️"],
+      71: ["Leichter Schnee", "🌨️"], 73: ["Schneefall", "🌨️"], 75: ["Starker Schneefall", "❄️"],
+      77: ["Schneegriesel", "🌨️"],
+      80: ["Leichte Schauer", "🌦️"], 81: ["Regenschauer", "🌧️"], 82: ["Heftige Schauer", "⛈️"],
+      85: ["Schneeschauer", "🌨️"], 86: ["Starke Schneeschauer", "❄️"],
+      95: ["Gewitter", "⛈️"], 96: ["Gewitter mit Hagel", "⛈️"], 99: ["Gewitter mit Hagel", "⛈️"]
+    };
+    return m[code] || ["", "🌡️"];
+  }
+
+  function hintergrund(code, tag) {
+    var c;
+    if (tag === 0) c = ["#0a1224", "#1a2a48"];
+    else if (code <= 1) c = ["#1b4f8f", "#3f8acb"];
+    else if (code <= 3) c = ["#34445a", "#5d6f86"];
+    else if (code <= 48) c = ["#3a4350", "#69737f"];
+    else if (code >= 71 && code <= 77 || code === 85 || code === 86) c = ["#3f5068", "#8496ad"];
+    else if (code >= 95) c = ["#1f2333", "#3d4157"];
+    else c = ["#22324a", "#40566f"];
+    document.documentElement.style.setProperty("--bg1", c[0]);
+    document.documentElement.style.setProperty("--bg2", c[1]);
+  }
+
+  // ---------- Uhr ----------
+  function tick() {
+    var d = new Date();
+    var zeit = d.getHours() + ":" + pad(d.getMinutes());
+    var datum = WOCHENTAG[d.getDay()] + ", " + d.getDate() + ". " + MONAT[d.getMonth()] + " " + d.getFullYear();
+    if ($("zeit").textContent !== zeit) {
+      $("zeit").textContent = zeit;
+      $("wzeit").textContent = zeit;
+    }
+    if ($("datum").textContent !== datum) {
+      $("datum").textContent = datum;
+      $("wdatum").textContent = WT_KURZ[d.getDay()] + ", " + d.getDate() + ". " + MONAT[d.getMonth()];
+    }
+    var h = d.getHours();
+    document.body.classList.toggle("nacht", CFG.nacht && (h >= 22 || h < 6));
+    setTimeout(tick, 1000 - d.getMilliseconds() + 20);
+  }
+
+  // ---------- Wetter ----------
+  var daten = null;
+
+  function url() {
+    return "https://api.open-meteo.com/v1/forecast?latitude=" + CFG.lat + "&longitude=" + CFG.lon +
+      "&current=temperature_2m,apparent_temperature,relative_humidity_2m,is_day,precipitation,weather_code,wind_speed_10m,wind_direction_10m,wind_gusts_10m" +
+      "&hourly=temperature_2m,precipitation_probability,weather_code,is_day" +
+      "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset,uv_index_max" +
+      "&timezone=Europe%2FBerlin&forecast_days=7&wind_speed_unit=kmh";
+  }
+
+  function laden() {
+    fetch(url(), { cache: "no-store" })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then(function (j) {
+        daten = j; daten._geholt = Date.now();
+        try { localStorage.setItem(CACHE_KEY, JSON.stringify(daten)); } catch (e) {}
+        zeichnen();
+        setTimeout(laden, REFRESH_MS);
+      })
+      .catch(function () {
+        zeichnen();
+        setTimeout(laden, RETRY_MS);
+      });
+  }
+
+  function kachel(label, wert) {
+    return '<div class="kachel"><div class="l">' + label + '</div><div class="w">' + wert + "</div></div>";
+  }
+
+  function zeichnen() {
+    if (!daten || !daten.current) return;
+    var c = daten.current, h = daten.hourly, t = daten.daily;
+    var w = wetter(c.weather_code, c.is_day);
+    hintergrund(c.weather_code, c.is_day);
+
+    // Kurzinfo unter der Uhr
+    $("kurz").textContent = w[1] + "  " + grad(c.temperature_2m) + "  ·  " + w[0] +
+      "  ·  " + grad(t.temperature_2m_min[0]) + " / " + grad(t.temperature_2m_max[0]);
+
+    // Jetzt
+    $("jIcon").textContent = w[1];
+    $("jTemp").textContent = grad(c.temperature_2m);
+    $("jText").textContent = w[0];
+    $("jFuehlt").textContent = "gefühlt " + grad(c.apparent_temperature) +
+      "  ·  heute " + grad(t.temperature_2m_min[0]) + " bis " + grad(t.temperature_2m_max[0]);
+
+    // Fakten
+    $("fakten").innerHTML =
+      kachel("Wind", Math.round(c.wind_speed_10m) + " <small>km/h " + richtung(c.wind_direction_10m) + "</small>") +
+      kachel("Böen", Math.round(c.wind_gusts_10m) + " <small>km/h</small>") +
+      kachel("Regen heute", (t.precipitation_probability_max[0] == null ? "?" : t.precipitation_probability_max[0]) +
+        " <small>% · " + String(Math.round(t.precipitation_sum[0] * 10) / 10).replace(".", ",") + " mm</small>") +
+      kachel("Luftfeuchte", Math.round(c.relative_humidity_2m) + " <small>%</small>") +
+      kachel("Sonne auf", hhmm(t.sunrise[0])) +
+      kachel("Sonne unter", hhmm(t.sunset[0]));
+
+    // Naechste Stunden: 8 Werte im 2-Stunden-Takt
+    var start = 0;
+    for (var i = 0; i < h.time.length; i++) { if (h.time[i] > c.time) { start = i; break; } }
+    var sh = "";
+    for (var k = 0; k < 8; k++) {
+      var j = start + k * 2;
+      if (j >= h.time.length) break;
+      var hw = wetter(h.weather_code[j], h.is_day[j]);
+      var pp = h.precipitation_probability[j];
+      sh += '<div class="zelle"><div class="z-t">' + h.time[j].slice(11, 13) + ' Uhr</div><div class="z-i">' + hw[1] +
+        '</div><div class="z-w">' + grad(h.temperature_2m[j]) + '</div><div class="z-r">' +
+        (pp ? "💧 " + pp + " %" : "") + "</div></div>";
+    }
+    $("stunden").innerHTML = sh;
+
+    // Naechste 5 Tage
+    var st = "";
+    for (var d = 1; d <= 5 && d < t.time.length; d++) {
+      var dt = new Date(t.time[d] + "T12:00:00");
+      var name = d === 1 ? "Morgen" : WT_KURZ[dt.getDay()] + " " + dt.getDate() + ".";
+      var tw = wetter(t.weather_code[d], 1);
+      var tp = t.precipitation_probability_max[d];
+      st += '<div class="zelle"><div class="z-t">' + name + '</div><div class="z-i">' + tw[1] +
+        '</div><div class="z-w">' + grad(t.temperature_2m_max[d]) + ' <span class="min">' + grad(t.temperature_2m_min[d]) +
+        '</span></div><div class="z-r">' + (tp ? "💧 " + tp + " %" : "") + "</div></div>";
+    }
+    $("tage").innerHTML = st;
+
+    // Stand der Daten
+    var alter = Math.round((Date.now() - (daten._geholt || Date.now())) / 60000);
+    $("stand").textContent = "Wetter: Open-Meteo · Stand " + hhmm(c.time) + (alter > 30 ? " (keine Verbindung)" : "");
+  }
+
+  // ---------- Wechsel der Ansichten ----------
+  var aktiv = "uhr", timer = null;
+  function zeige(name) {
+    aktiv = name;
+    $("uhr").classList.toggle("on", name === "uhr");
+    $("wetter").classList.toggle("on", name === "wetter");
+  }
+  function weiter() {
+    if (CFG.ansicht) return;
+    if (!daten) { zeige("uhr"); return; }
+    zeige(aktiv === "uhr" ? "wetter" : "uhr");
+  }
+  function starteTimer() {
+    clearInterval(timer);
+    timer = setInterval(weiter, CFG.sek * 1000);
+  }
+  function querformat() {
+    try {
+      if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(function () {});
+    } catch (e) {}
+  }
+  function istVollbild() {
+    return document.fullscreenElement || document.webkitFullscreenElement ||
+      (window.matchMedia && window.matchMedia("(display-mode: fullscreen)").matches);
+  }
+  document.addEventListener("click", function () {
+    var el = document.documentElement;
+    var fs = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (!istVollbild() && fs) {
+      try {
+        var r = fs.call(el);
+        if (r && r.then) r.then(querformat).catch(function () {});
+      } catch (e) {}
+      return;
+    }
+    if (CFG.ansicht) return;
+    weiter(); starteTimer();
+  });
+
+  // ---------- Bildschirm wach halten (wo der Browser es kann) ----------
+  var lock = null;
+  function wach() {
+    if (!("wakeLock" in navigator) || document.visibilityState !== "visible") return;
+    navigator.wakeLock.request("screen").then(function (l) { lock = l; }).catch(function () {});
+  }
+  document.addEventListener("visibilitychange", wach);
+
+  // ---------- Start ----------
+  try {
+    var alt = JSON.parse(localStorage.getItem(CACHE_KEY) || "null");
+    if (alt && alt.current) { daten = alt; }
+  } catch (e) {}
+  tick();
+  zeichnen();
+  if (CFG.ansicht === "wetter" || CFG.ansicht === "uhr") zeige(CFG.ansicht);
+  laden();
+  starteTimer();
+  wach();
+  if (istVollbild()) querformat();
+})();
+</script>
+</body>
+</html>
